@@ -1,0 +1,11 @@
+[package]
+name = "url_match_pattern"
+version = "0.1.0"
+authors = ["Jørgen Tjernø <jorgenpt@gmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+regex = "^1"
+url = "^2.2"
+regex-syntax = "^0.6"
