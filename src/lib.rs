@@ -8,8 +8,8 @@
 
 use regex::Regex;
 use regex_syntax;
-// TODO Serde feature
-//use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, fmt};
 use thiserror::Error;
 use url::Url;
@@ -32,8 +32,8 @@ pub enum Error {
 }
 
 /// A parsed WebExtensions pattern
-// #[serde(try_from = "String", into = "String")]
-// #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct Pattern {
     source: String,
