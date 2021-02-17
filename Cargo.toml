@@ -1,5 +1,5 @@
 [package]
-name = "url_match_pattern"
+name = "webextension_pattern"
 version = "0.1.0"
 authors = ["Jørgen Tjernø <jorgenpt@gmail.com>"]
 edition = "2018"
