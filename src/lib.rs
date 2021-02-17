@@ -1,3 +1,11 @@
+//! webextension_pattern implements support for matching URLs with a powerful and intuitive pattern. It's simpler than regular expressions, and specifically tailored to URL matching.
+//! It's the format used by Mozilla's WebExtensions for matching URLs, as well as Google Chrome, and you can find their documentation here:
+//!
+//!  - [Reference on developer.mozilla.org](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns)
+//!  - [Reference on developer.chrome.com](https://developer.chrome.com/docs/extensions/mv2/match_patterns/)
+//!
+//! This crate aims to be compatible with Mozilla's implementation, specifically.
+
 use regex::Regex;
 use regex_syntax;
 // TODO Serde feature
@@ -23,6 +31,7 @@ pub enum Error {
     },
 }
 
+/// A parsed WebExtensions pattern
 // #[serde(try_from = "String", into = "String")]
 // #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(Debug, Clone)]
@@ -50,8 +59,8 @@ impl Pattern {
     }
 
     pub fn new(source: &str, relaxed: bool) -> Result<Pattern> {
-        // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns#browser_compatibility
-        // https://searchfox.org/mozilla-central/source/toolkit/components/extensions/MatchPattern.cpp
+        // This implementation used mozilla::extensions::MatchPattern::Init as a reference (see https://searchfox.org/mozilla-central/source/toolkit/components/extensions/MatchPattern.cpp
+        // for the full details).
         if source == "<all_urls>" {
             return Ok(Self::wildcard_from_source(source));
         }
