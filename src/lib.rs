@@ -5,6 +5,8 @@
 //!  - [Reference on developer.chrome.com](https://developer.chrome.com/docs/extensions/mv2/match_patterns/)
 //!
 //! This crate aims to be compatible with Mozilla's implementation, specifically.
+//!
+//! See [`Pattern::new`] for information about the format.
 
 use regex::Regex;
 use regex_syntax;
@@ -16,22 +18,56 @@ use url::Url;
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// Error type for parsing a [`Pattern`]
 #[derive(Error, Debug)]
 pub enum Error {
+    /// The given pattern does not contain an URL scheme (not applicable to `relaxed` parsing)
     #[error("could not identify any url scheme component for pattern {0:?}")]
     MissingScheme(String),
+    /// The given pattern does not contain a path (not applicable to `relaxed` parsing)
     #[error("could not identify any path component for pattern {0:?}")]
     MissingPath(String),
+    /// The regular expression generated from the path pattern failed to compile
     #[error("failed to compile regex {pattern_regex:?} (generated from {pattern_source:?})")]
     RegexCompile {
+        /// The `source` given to [`Pattern::new`]
         pattern_source: String,
+        /// The regular expression generated from `pattern_source`
         pattern_regex: String,
+        /// The exception from `Regex::new`
         #[source]
         source: regex::Error,
     },
 }
 
 /// A parsed WebExtensions pattern
+///
+/// # Format
+///
+/// A strict format looks like `SCHEMA://HOST/PATH`:
+/// - `SCHEMA` can be `*` (all schemas), or a specific schema like `http`
+/// - `HOST` can be `*` (all hosts), a specific host (no wildcards allowed) like `google.com`, or something starting with `*.` to indicate that the domain itself and any subdomain is valid, like `*.google.com`
+/// - `PATH` is a string that is matched against the full path, and `SCHEMA://HOST/` is considered to *only* match the path `/`. It supports wildcards with `*`, which will match any character (including a slash)
+///
+/// The `relaxed` format is a superset of the strict format, and you can optionally omit the schema and the path -- omitting `SCHEMA://` will match all schemas, and omitting the path (or leaving it as `/`) will match all paths.
+///
+/// # Examples
+///
+/// ```
+/// use webextension_pattern::Pattern;
+/// use url::Url;
+/// let p = Pattern::new("*://google.com/foo*bar", false)?;
+/// assert!(!p.is_match(&Url::parse("http://google.com/")?));
+/// assert!(p.is_match(&Url::parse("https://google.com/foo/baz/bar")?));
+/// assert!(p.is_match(&Url::parse("https://google.com/foo_bar")?));
+/// assert!(!p.is_match(&Url::parse("https://mail.google.com/foo_bar")?));
+///
+/// let p = Pattern::new("*.google.com", true)?;
+/// assert!(p.is_match(&Url::parse("http://google.com/")?));
+/// assert!(p.is_match(&Url::parse("https://google.com/foo_bar")?));
+/// assert!(p.is_match(&Url::parse("https://mail.google.com/something_else")?));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
@@ -44,6 +80,7 @@ pub struct Pattern {
 }
 
 impl Pattern {
+    /// Return a pattern that will match any URL
     pub fn wildcard() -> Pattern {
         Self::wildcard_from_source("<all_urls>")
     }
@@ -58,9 +95,12 @@ impl Pattern {
         }
     }
 
+    /// Parse a pattern from the given `source`. If using `relaxed`, it will not adhere to the requirements of the
+    /// Mozilla format by allowing the omission of an URL scheme and the omission of an explicit path, causing it
+    /// to assume these as wildcards. This mode is intended to be more forgiving for common user patterns.
     pub fn new(source: &str, relaxed: bool) -> Result<Pattern> {
         // This implementation used mozilla::extensions::MatchPattern::Init as a reference (see https://searchfox.org/mozilla-central/source/toolkit/components/extensions/MatchPattern.cpp
-        // for the full details).
+        // for the full details) for the non-relaxed parsing.
         if source == "<all_urls>" {
             return Ok(Self::wildcard_from_source(source));
         }
@@ -122,6 +162,7 @@ impl Pattern {
         })
     }
 
+    /// Check if the [`Pattern`] matches the `url`.
     pub fn is_match(&self, url: &Url) -> bool {
         if let Some(scheme) = &self.scheme {
             if url.scheme() != scheme {
