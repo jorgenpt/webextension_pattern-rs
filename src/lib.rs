@@ -14,7 +14,7 @@ use regex_syntax;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, fmt};
 use thiserror::Error;
-use url::Url;
+use url::{Position, Url};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -64,7 +64,7 @@ impl Schemes {
 #[derive(Debug, Clone)]
 enum Hosts {
     All,
-    SpecificHost(String),
+    SpecificHost(Option<String>),
     SpecificHostWithSubdomains(String),
 }
 
@@ -72,7 +72,7 @@ impl Hosts {
     fn include(&self, host: Option<&str>) -> bool {
         match self {
             Hosts::All => true,
-            Hosts::SpecificHost(specific_host) => host == Some(specific_host),
+            Hosts::SpecificHost(specific_host) => host == specific_host.as_deref(),
             Hosts::SpecificHostWithSubdomains(specific_host) => {
                 if let Some(host) = host {
                     if host.len() > specific_host.len() {
@@ -212,8 +212,10 @@ impl Pattern {
             Hosts::All
         } else if host.starts_with("*.") {
             Hosts::SpecificHostWithSubdomains(host[2..].to_string())
+        } else if host.len() > 0 {
+            Hosts::SpecificHost(Some(host.to_string()))
         } else {
-            Hosts::SpecificHost(host.to_string())
+            Hosts::SpecificHost(None)
         };
 
         let path = &source[end_of_host..];
@@ -241,7 +243,9 @@ impl Pattern {
     pub fn is_match(&self, url: &Url) -> bool {
         self.schemes.include(url.scheme())
             && self.hosts.include(url.host_str())
-            && self.paths.include(url.path())
+            && self
+                .paths
+                .include(&url[Position::BeforePath..Position::AfterQuery])
     }
 
     /// Convert a glob with asterisks to an anchored regex
@@ -295,6 +299,35 @@ mod tests {
     use super::*;
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    macro_rules! assert_err {
+        ($expression:expr, $($pattern:tt)+) => {
+            match $expression {
+                $($pattern)+ => (),
+                ref e => panic!("expected `{}` but got `{:?}`", stringify!($($pattern)+), e),
+            }
+        }
+    }
+
+    macro_rules! assert_pattern_does_match {
+        ($pattern:expr, $matching_urls:expr) => {
+            for url in ($matching_urls).iter().map(|u| Url::parse(u)) {
+                let url = url?;
+                assert!($pattern.is_match(&url), "url = {}", url.to_string());
+            }
+        };
+    }
+
+    macro_rules! assert_pattern_does_not_match {
+        ($pattern:expr, $matching_urls:expr) => {
+            for url in ($matching_urls).iter().map(|u| Url::parse(u)) {
+                let url = url?;
+                assert!(!$pattern.is_match(&url), "url = {}", url.to_string());
+            }
+        };
+    }
+
+    // Test data from https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns#examples
     mod mozilla_patterns {
         use super::*;
 
@@ -302,17 +335,17 @@ mod tests {
         fn all_urls() -> TestResult {
             let p = Pattern::new("<all_urls>", false)?;
 
-            let matched_urls = [
-                "http://example.org/",
-                "https://a.org/some/path/",
-                "ws://sockets.somewhere.org/",
-                "wss://ws.example.com/stuff/",
-                "ftp://files.somewhere.org/",
-                "ftps://files.somewhere.org/",
-            ];
-            for url in matched_urls.iter().map(|u| Url::parse(u)) {
-                assert!(p.is_match(&url?));
-            }
+            assert_pattern_does_match!(
+                p,
+                [
+                    "http://example.org/",
+                    "https://a.org/some/path/",
+                    "ws://sockets.somewhere.org/",
+                    "wss://ws.example.com/stuff/",
+                    "ftp://files.somewhere.org/",
+                    "ftps://files.somewhere.org/",
+                ]
+            );
 
             // This is listed as a "not matching" URL in the Mozilla docs, but we don't do any enforcement
             // of protocol when matching against the wildcard.
@@ -326,26 +359,261 @@ mod tests {
         fn all_wildcards() -> TestResult {
             let p = Pattern::new("*://*/*", false)?;
 
-            let matched_urls = [
-                "http://example.org/",
-                "https://a.org/some/path/",
-                "ws://sockets.somewhere.org/",
-                "wss://ws.example.com/stuff/",
-            ];
-            for url in matched_urls.iter().map(|u| Url::parse(u)) {
-                assert!(p.is_match(&url?));
-            }
+            assert_pattern_does_match!(
+                p,
+                [
+                    "http://example.org/",
+                    "https://a.org/some/path/",
+                    "ws://sockets.somewhere.org/",
+                    "wss://ws.example.com/stuff/",
+                ]
+            );
 
-            let unmatched_urls = [
-                "ftp://ftp.example.org/",  // unmatched scheme
-                "ftps://ftp.example.org/", // unmatched scheme
-                "file:///a/",              // unmatched scheme
-            ];
-            for url in unmatched_urls.iter().map(|u| Url::parse(u)) {
-                assert!(!p.is_match(&url?));
-            }
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "ftp://ftp.example.org/",  // unmatched scheme
+                    "ftps://ftp.example.org/", // unmatched scheme
+                    "file:///a/",              // unmatched scheme
+                ]
+            );
 
             Ok(())
+        }
+
+        #[test]
+        fn subdomain_wildcard() -> TestResult {
+            let p = Pattern::new("*://*.mozilla.org/*", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "http://mozilla.org/",
+                    "https://mozilla.org/",
+                    "http://a.mozilla.org/",
+                    "http://a.b.mozilla.org/",
+                    "https://b.mozilla.org/path/",
+                    "ws://ws.mozilla.org/",
+                    "wss://secure.mozilla.org/something",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "ftp://mozilla.org/",  // unmatched scheme
+                    "http://mozilla.com/", // unmatched host
+                    "http://firefox.org/", // unmatched host
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn scheme_wildcard() -> TestResult {
+            let p = Pattern::new("*://mozilla.org/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "http://mozilla.org/",
+                    "https://mozilla.org/",
+                    "ws://mozilla.org/",
+                    "wss://mozilla.org/",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "ftp://mozilla.org/",    // unmatched scheme
+                    "http://a.mozilla.org/", // unmatched host
+                    "http://mozilla.org/a",  // unmatched path
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn all_fixed() -> TestResult {
+            let p = Pattern::new("ftp://mozilla.org/", false)?;
+
+            assert_pattern_does_match!(p, ["ftp://mozilla.org"]);
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "http://mozilla.org/",    // unmatched scheme
+                    "ftp://sub.mozilla.org/", // unmatched host
+                    "ftp://mozilla.org/path", // unmatched path
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn wildcard_host() -> TestResult {
+            let p = Pattern::new("https://*/path", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/path",
+                    "https://a.mozilla.org/path",
+                    "https://something.com/path",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "http://mozilla.org/path",        // unmatched scheme
+                    "https://mozilla.org/path/",      // unmatched path
+                    "https://mozilla.org/a",          // unmatched path
+                    "https://mozilla.org/",           // unmatched path
+                    "https://mozilla.org/path?foo=1", // unmatched path due to URL query string
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn wildcard_host_trailing_slash() -> TestResult {
+            let p = Pattern::new("https://*/path/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/path/",
+                    "https://a.mozilla.org/path/",
+                    "https://something.com/path/",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "http://mozilla.org/path/",        // unmatched scheme
+                    "https://mozilla.org/path",        // unmatched path
+                    "https://mozilla.org/a",           // unmatched path
+                    "https://mozilla.org/",            // unmatched path
+                    "https://mozilla.org/path/?foo=1", // unmatched path due to URL query string
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn wildcard_path() -> TestResult {
+            let p = Pattern::new("https://mozilla.org/*", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/",
+                    "https://mozilla.org/path",
+                    "https://mozilla.org/another",
+                    "https://mozilla.org/path/to/doc",
+                    "https://mozilla.org/path/to/doc?foo=1",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "http://mozilla.org/path",  // unmatched scheme
+                    "https://mozilla.com/path", // unmatched host
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn all_fixed_http() -> TestResult {
+            let p = Pattern::new("https://mozilla.org/a/b/c/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/a/b/c/",
+                    "https://mozilla.org/a/b/c/#section1",
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn multiple_wildcard_path() -> TestResult {
+            let p = Pattern::new("https://mozilla.org/*/b/*/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/a/b/c/",
+                    "https://mozilla.org/d/b/f/",
+                    "https://mozilla.org/a/b/c/d/",
+                    "https://mozilla.org/a/b/c/d/#section1",
+                    "https://mozilla.org/a/b/c/d/?foo=/",
+                    "https://mozilla.org/a?foo=21314&bar=/b/&extra=c/",
+                ]
+            );
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "https://mozilla.org/b/*/",             // unmatched path
+                    "https://mozilla.org/a/b/",             // unmatched path
+                    "https://mozilla.org/a/b/c/d/?foo=bar", // unmatched path due to URL query string
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn file_scheme_path_wildcard() -> TestResult {
+            let p = Pattern::new("file:///blah/*", false)?;
+
+            assert_pattern_does_match!(p, ["file:///blah/", "file:///blah/bleh"]);
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "file:///bleh/" // unmatched path
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn parse_errors() {
+            // This would fail Mozilla implementation as they filter which schemes are allowed unless you pass a flag: `Pattern::new("resource://path/", false)` -- We don't filter.
+
+            // No path
+            assert_err!(
+                Pattern::new("https://mozilla.org", false),
+                Err(Error::MissingPath(_))
+            );
+
+            //	No path, this should be "*://*/*".
+            assert_err!(Pattern::new(" *://*", false), Err(Error::MissingPath(_)));
+
+            // No path, this should be "file:///*".
+            assert_err!(Pattern::new(" *://*", false), Err(Error::MissingPath(_)));
+
+            // Some that we don't currently implement errors for
+            // https://mozilla.*.org/	"*" in host must be at the start.
+            // https://*zilla.org/	"*" in host must be the only character or be followed by ".".
+            // http*://mozilla.org/	"*" in scheme must be the only character.
+            // https://mozilla.org:80/	Host must not include a port number.
         }
     }
 }
