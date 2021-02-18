@@ -22,5 +22,7 @@ jobs:
         run: cargo login ${CRATES_IO_TOKEN}
         env:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+      - name: Verify tests
+        run: cargo test --verbose --all-features
       - name: Publish to crates.io
-        run: cargo publish -v
+        run: cargo publish --verbose
