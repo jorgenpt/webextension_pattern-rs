@@ -40,8 +40,6 @@ pub enum Error {
     },
 }
 
-#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 enum Schemes {
     All,
@@ -59,8 +57,6 @@ impl Schemes {
     }
 }
 
-#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 enum Hosts {
     All,
@@ -93,8 +89,6 @@ impl Hosts {
     }
 }
 
-#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 enum Paths {
     All,
