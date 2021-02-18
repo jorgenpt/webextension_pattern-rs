@@ -1,7 +1,7 @@
 [package]
 name = "webextension_pattern"
-description = "Intuitive URL pattern matching as used by Firefox & Chrome"
-keywords = ["url", "match", "pattern", "link", "firefox"]
+description = "Intuitive URL pattern matching as used by Firefox WebExtensions and by Chrome"
+keywords = ["url", "match", "pattern", "link", "manifest"]
 categories = ["parser-implementations", "web-programming"]
 version = "0.1.0"
 authors = ["Jørgen Tjernø <jorgenpt@gmail.com>"]
