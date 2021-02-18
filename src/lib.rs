@@ -181,8 +181,7 @@ impl Pattern {
                     if &url_host[subdomain_offset..] != host {
                         return false;
                     }
-                }
-                if url.host_str() != Some(host) {
+                } else if url.host_str() != Some(host) {
                     return false;
                 }
             } else {
