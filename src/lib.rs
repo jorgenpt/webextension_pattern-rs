@@ -292,8 +292,60 @@ impl fmt::Display for Pattern {
 // TODO test cases
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+    mod mozilla_patterns {
+        use super::*;
+
+        #[test]
+        fn all_urls() -> TestResult {
+            let p = Pattern::new("<all_urls>", false)?;
+
+            let matched_urls = [
+                "http://example.org/",
+                "https://a.org/some/path/",
+                "ws://sockets.somewhere.org/",
+                "wss://ws.example.com/stuff/",
+                "ftp://files.somewhere.org/",
+                "ftps://files.somewhere.org/",
+            ];
+            for url in matched_urls.iter().map(|u| Url::parse(u)) {
+                assert!(p.is_match(&url?));
+            }
+
+            // This is listed as a "not matching" URL in the Mozilla docs, but we don't do any enforcement
+            // of protocol when matching against the wildcard.
+            // let not_matching_url = Url::parse("resource://a/b/c/")?;
+            // assert!(!p.is_match(&not_matching_url));
+
+            Ok(())
+        }
+
+        #[test]
+        fn all_wildcards() -> TestResult {
+            let p = Pattern::new("*://*/*", false)?;
+
+            let matched_urls = [
+                "http://example.org/",
+                "https://a.org/some/path/",
+                "ws://sockets.somewhere.org/",
+                "wss://ws.example.com/stuff/",
+            ];
+            for url in matched_urls.iter().map(|u| Url::parse(u)) {
+                assert!(p.is_match(&url?));
+            }
+
+            let unmatched_urls = [
+                "ftp://ftp.example.org/",  // unmatched scheme
+                "ftps://ftp.example.org/", // unmatched scheme
+                "file:///a/",              // unmatched scheme
+            ];
+            for url in unmatched_urls.iter().map(|u| Url::parse(u)) {
+                assert!(!p.is_match(&url?));
+            }
+
+            Ok(())
+        }
     }
 }
