@@ -21,6 +21,13 @@ This crate aims to be compatible with Mozilla's implementation,
 specifically, but also supports a "relaxed" mode that does not strictly
 adhere, for user-friendliness.
 
+These patterns end up looking like this:
+ - `*://google.com/foo*bar`
+ - `https://*.mozilla.org/specific_path?k=1`
+ - `*://*/index.php`
+ - (_relaxed mode_) `*.facebook.com`
+
+
 ## License
 
 webextension\_pattern is licensed under either of
