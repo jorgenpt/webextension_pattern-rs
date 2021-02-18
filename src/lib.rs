@@ -6,7 +6,7 @@
 //!
 //! This crate aims to be compatible with Mozilla's implementation, specifically.
 //!
-//! See [`Pattern::new`] for information about the format.
+//! See [`Pattern`] for information about the format.
 
 use regex::Regex;
 use regex_syntax;
