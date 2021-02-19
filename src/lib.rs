@@ -287,7 +287,6 @@ impl fmt::Display for Pattern {
     }
 }
 
-// TODO test cases
 #[cfg(test)]
 mod tests {
     use super::*;
