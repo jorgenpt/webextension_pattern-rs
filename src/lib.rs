@@ -16,7 +16,7 @@
 //!
 //! Additional documentation on the format itself can be found in [`Pattern`]'s documentation.
 
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use regex_syntax;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ pub enum Error {
         pattern_source: String,
         /// The regular expression generated from `pattern_source`
         pattern_regex: String,
-        /// The exception from `Regex::new`
+        /// The exception from `RegexBuilder::build`
         #[source]
         source: regex::Error,
     },
@@ -60,7 +60,7 @@ impl Schemes {
         match self {
             Schemes::All => true,
             Schemes::Wildcard => WILDCARD_SCHEMES.iter().any(|s| *s == scheme),
-            Schemes::SpecificScheme(specific_scheme) => scheme == specific_scheme,
+            Schemes::SpecificScheme(specific_scheme) => *specific_scheme == scheme,
         }
     }
 }
@@ -74,9 +74,10 @@ enum Hosts {
 
 impl Hosts {
     fn include(&self, host: Option<&str>) -> bool {
+        let host = host.map(|h| h.to_lowercase());
         match self {
             Hosts::All => true,
-            Hosts::SpecificHost(specific_host) => host == specific_host.as_deref(),
+            Hosts::SpecificHost(specific_host) => host == *specific_host,
             Hosts::SpecificHostWithSubdomains(specific_host) => {
                 if let Some(host) = host {
                     if host.len() > specific_host.len() {
@@ -85,9 +86,9 @@ impl Hosts {
                             return false;
                         }
 
-                        &host[subdomain_offset..] == specific_host
+                        &host[subdomain_offset..] == *specific_host
                     } else {
-                        host == specific_host
+                        host == *specific_host
                     }
                 } else {
                     false
@@ -124,6 +125,7 @@ impl Paths {
 /// The value `<all_urls>` is a special token that matches all URLs.
 ///
 /// The `relaxed` format is a superset of the strict format, and you can optionally omit the schema and the path -- omitting `SCHEMA://` will match all schemas, and omitting the path (or leaving it as `/`) will match all paths.
+/// `relaxed` formats also do case insensitive path matching.
 ///
 /// # Examples
 ///
@@ -197,7 +199,7 @@ impl Pattern {
             } else {
                 (
                     &source[end_of_scheme + 3..],
-                    Schemes::SpecificScheme(scheme.to_string()),
+                    Schemes::SpecificScheme(scheme.to_lowercase()),
                 )
             }
         } else {
@@ -213,9 +215,9 @@ impl Pattern {
         let hosts = if host == "*" {
             Hosts::All
         } else if host.starts_with("*.") {
-            Hosts::SpecificHostWithSubdomains(host[2..].to_string())
+            Hosts::SpecificHostWithSubdomains(host[2..].to_lowercase())
         } else if host.len() > 0 {
-            Hosts::SpecificHost(Some(host.to_string()))
+            Hosts::SpecificHost(Some(host.to_lowercase()))
         } else {
             Hosts::SpecificHost(None)
         };
@@ -230,7 +232,7 @@ impl Pattern {
         } else if relaxed && path == "/" {
             Paths::All
         } else {
-            Paths::MatchingPattern(Self::glob_to_regex(path)?)
+            Paths::MatchingPattern(Self::glob_to_regex(relaxed, path)?)
         };
 
         Ok(Self {
@@ -251,7 +253,7 @@ impl Pattern {
     }
 
     /// Convert a glob with asterisks to an anchored regex
-    fn glob_to_regex(glob: &str) -> Result<Regex> {
+    fn glob_to_regex(relaxed: bool, glob: &str) -> Result<Regex> {
         let mut regex_pattern = String::with_capacity(glob.len() * 2);
         regex_pattern.push('^');
         for c in glob.chars() {
@@ -267,11 +269,14 @@ impl Pattern {
         }
         regex_pattern.push('$');
 
-        Regex::new(&regex_pattern).map_err(|err| Error::RegexCompile {
-            pattern_source: glob.to_string(),
-            pattern_regex: regex_pattern,
-            source: err,
-        })
+        RegexBuilder::new(&regex_pattern)
+            .case_insensitive(relaxed)
+            .build()
+            .map_err(|err| Error::RegexCompile {
+                pattern_source: glob.to_string(),
+                pattern_regex: regex_pattern,
+                source: err,
+            })
     }
 }
 
@@ -615,6 +620,78 @@ mod tests {
             // https://*zilla.org/	"*" in host must be the only character or be followed by ".".
             // http*://mozilla.org/	"*" in scheme must be the only character.
             // https://mozilla.org:80/	Host must not include a port number.
+        }
+    }
+
+    // webextension_pattern's own tests
+    mod our_patterns {
+        use super::*;
+
+        #[test]
+        fn host_case_insensitivity() -> TestResult {
+            let p = Pattern::new("https://moZilla.org/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://moZilla.org/",
+                    "https://mozilla.org/",
+                    "https://MOZILLA.org/",
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn protocol_case_insensitivity() -> TestResult {
+            let p = Pattern::new("httpS://mozilla.org/", false)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "httpS://mozilla.org/",
+                    "https://mozilla.org/",
+                    "HTTPs://mozilla.org/",
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn relaxed_path_case_insensitivity() -> TestResult {
+            let p = Pattern::new("https://mozilla.org/*/Test/*/", true)?;
+
+            assert_pattern_does_match!(
+                p,
+                [
+                    "https://mozilla.org/One/Test/Two/",
+                    "https://mozilla.org/one/TEST/two/",
+                    "https://mozilla.org/ONE/test/two/",
+                    "https://mozilla.org/one/tESt/TWO/"
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn strict_path_case_sensitivity() -> TestResult {
+            let p = Pattern::new("https://mozilla.org/*/Test/*/", false)?;
+
+            assert_pattern_does_match!(p, ["https://mozilla.org/One/Test/Two/"]);
+
+            assert_pattern_does_not_match!(
+                p,
+                [
+                    "https://mozilla.org/one/TEST/two/",
+                    "https://mozilla.org/ONE/test/two/",
+                    "https://mozilla.org/one/tESt/TWO/"
+                ]
+            );
+
+            Ok(())
         }
     }
 }
