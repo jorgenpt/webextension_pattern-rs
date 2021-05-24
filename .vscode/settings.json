@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.cargo.features": [
+        "serde"
+    ],
+    "rust-analyzer.checkOnSave.command": "clippy"
+}
